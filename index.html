@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shredder Auto-Catch</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bodymovin/5.12.2/lottie.min.js"></script>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background-color: #f5f5f5;
+            margin: 0;
+            min-height: 100vh;
+        }
+
+        #upload-wrapper {
+            margin-bottom: 20px;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        #stage-container {
+            position: relative;
+            /* Container maintains the 1910x2232 aspect ratio */
+            width: 400px; 
+            height: 467px; 
+            background-color: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            overflow: hidden;
+            display: none; 
+        }
+
+        #lottie-container {
+            width: 100%;
+            height: 100%;
+            pointer-events: none; 
+        }
+
+        /* This zone is mapped explicitly to "Rectangle 10" from the JSON.
+           Based on the 1910x2232 canvas, the rectangle is at roughly:
+           X: 1400 (73% from left)
+           Y: 1167 (52% from top)
+           We convert these to percentages so it scales perfectly with the 400px container.
+        */
+        #scrub-zone {
+            position: absolute;
+            top: 46%;       /* Adjusting to cover the top of the rectangle */
+            left: 69%;      /* Positioned over the slider area */
+            width: 6%;      /* Thin width matching the rectangle */
+            height: 15%;    /* Height matching the slider path */
+            background-color: transparent; 
+            cursor: grab;
+            touch-action: none; 
+            z-index: 10;
+        }
+
+        #scrub-zone:active {
+            cursor: grabbing;
+        }
+
+        /* Refresh Button SVG */
+        #refresh-btn {
+            position: absolute;
+            bottom: 12px;
+            right: 12px;
+            width: 20px;
+            height: 20px;
+            color: #ccc;
+            cursor: pointer;
+            z-index: 20;
+            transition: color 0.2s ease;
+        }
+
+        #refresh-btn:hover {
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="upload-wrapper">
+        <label for="lottie-upload"><strong>Upload shredder.json:</strong></label>
+        <input type="file" id="lottie-upload" accept=".json">
+    </div>
+
+    <div id="stage-container">
+        <div id="lottie-container"></div>
+        <div id="scrub-zone"></div>
+        
+        <svg id="refresh-btn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+        </svg>
+    </div>
+
+    <script>
+        const uploadInput = document.getElementById('lottie-upload');
+        const uploadWrapper = document.getElementById('upload-wrapper');
+        const stageContainer = document.getElementById('stage-container');
+        const container = document.getElementById('lottie-container');
+        const scrubZone = document.getElementById('scrub-zone');
+        const refreshBtn = document.getElementById('refresh-btn');
+        
+        let currentAnimation = null;
+        let isDragging = false;
+        let lastY = 0;
+        let currentFrame = 0;
+        let isAutoPlaying = false; 
+
+        // 1. File Upload Logic
+        uploadInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                try {
+                    const animationData = JSON.parse(event.target.result);
+
+                    if (currentAnimation) {
+                        currentAnimation.destroy();
+                    }
+
+                    uploadWrapper.style.display = 'none';
+                    stageContainer.style.display = 'block';
+
+                    isAutoPlaying = false;
+                    currentFrame = 0;
+                    scrubZone.style.pointerEvents = "auto"; 
+
+                    currentAnimation = lottie.loadAnimation({
+                        container: container,
+                        renderer: 'svg',
+                        loop: false,
+                        autoplay: false, 
+                        animationData: animationData
+                    });
+                    
+                } catch (error) {
+                    alert("Invalid JSON file.");
+                }
+            };
+            reader.readAsText(file);
+        });
+
+        // 2. Refresh Logic
+        refreshBtn.addEventListener('click', () => {
+            if (!currentAnimation) return;
+            
+            currentAnimation.goToAndStop(0, true);
+            isAutoPlaying = false;
+            isDragging = false;
+            currentFrame = 0;
+            
+            scrubZone.style.pointerEvents = "auto";
+        });
+
+        // 3. Downward Scrubbing + Auto-Catch Logic
+        function handleScrub(clientY) {
+            if (!isDragging || !currentAnimation || isAutoPlaying) return;
+
+            const deltaY = clientY - lastY;
+            const sensitivity = 0.3; 
+
+            if (deltaY > 0) {
+                currentFrame += (deltaY * sensitivity);
+                
+                const thresholdFrame = 1.05 * currentAnimation.frameRate; 
+
+                if (currentFrame >= thresholdFrame) {
+                    isAutoPlaying = true; 
+                    isDragging = false; 
+                    
+                    scrubZone.style.pointerEvents = "none";
+                    currentAnimation.play();
+                } else {
+                    currentAnimation.goToAndStop(currentFrame, true);
+                }
+            }
+
+            lastY = clientY;
+        }
+
+        // Desktop Mouse Events
+        scrubZone.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            lastY = e.clientY; 
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            handleScrub(e.clientY);
+        });
+
+        window.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+
+        // Mobile Touch Events
+        scrubZone.addEventListener('touchstart', (e) => {
+            isDragging = true;
+            lastY = e.touches[0].clientY;
+        });
+
+        window.addEventListener('touchmove', (e) => {
+            handleScrub(e.touches[0].clientY);
+        }, { passive: false });
+
+        window.addEventListener('touchend', () => {
+            isDragging = false;
+        });
+    </script>
+</body>
+</html>
